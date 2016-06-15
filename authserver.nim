@@ -1,4 +1,4 @@
-import asynchttpserver, asyncdispatch, tables, sam
+import asynchttpserver, asyncdispatch, tables, marshal, nuuid, rethinkdb
 
 type
   Agent = object
@@ -49,32 +49,32 @@ type
     clientToken: string
     accessToken: string
 
-  Response = ref object of RootObj
+  ErrorResponse = object
     error: string
     errorMessage: string
     cause: string
 
-  AuthenticationResponse = ref object of Response
+  AuthenticationResponse = object
     accessToken: string
     clientToken: string
     selectedProfile: GameProfile
     availableProfiles: seq[GameProfile]
     user: User
 
-  HasJoinedMinecraftServerResponse = ref object of Response
+  HasJoinedMinecraftServerResponse = object
     id: string
     properties: TableRef[string, Property]
 
 
-  MinecraftProfilePropertiesResponse = ref object of Response
+  MinecraftProfilePropertiesResponse = object
     id: string
     name: string
     properties: TableRef[string, Property]
 
-  ProfileSearchResultRepsonse = ref object of Response
+  ProfileSearchResultRepsonse = object
     profiles: seq[GameProfile]
 
-  RefreshResponse = ref object of Response
+  RefreshResponse = object
     accessToken: string
     clientToken: string
     selectedProfile: GameProfile
@@ -82,20 +82,48 @@ type
     user: User
 
 
-var server = newAsyncHttpServer()
+proc newErrorResponse(error, errorMessage: string, cause: string = nil): string =
+    if cause.isNil:
+      "{\"error\": \"" & error & "\", \"errorMessage\": \"" & errorMessage & "\"}"
+    else:
+      "{\"error\": \"" & error & "\", \"errorMessage\": \"" & errorMessage & "\", \"cause\": \"" & cause & "\"}"
+
+
 proc cb(req: Request) {.async.} =
   if req.reqMethod != "post":
      await req.respond(Http501, "Internal server errror")
      return
 
+  echo "<<< ", req.body
+
   if req.url.path == "/authenticate":
     var
       request: AuthenticationRequest
       response: AuthenticationResponse
-    request.loads(req.body)
-    await req.respond(Http200,  "I got some JSON: " & $$request)
+      error: string = nil
+
+    try:
+      request = to[AuthenticationRequest](req.body)
+    except:
+      error = newErrorResponse("Bad Request", "Unable to parse json data", getCurrentExceptionMsg())
+
+    if not error.isNil:
+      await req.respond(Http400, error)
+
+    if request.clientToken.isNil or request.clientToken == "":
+      response.clientToken = generateUUID()
+    else:
+      response.clientToken = request.clientToken
+
+    response.accessToken = "aa"
+
+    await req.respond(Http200, $$response)
+
+
+
 
 
   await req.respond(Http200, "Hello World")
 
-waitFor server.serve(Port(8080), cb)
+let server = newAsyncHttpServer()
+waitFor server.serve(Port(8888), cb)
